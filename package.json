@@ -1,0 +1,23 @@
+{
+  "name": "cricketteamselection",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Premapriya1905/CricketTeamSelection.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Premapriya1905/CricketTeamSelection/issues"
+  },
+  "homepage": "https://github.com/Premapriya1905/CricketTeamSelection#readme",
+  "description": "",
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  }
+}

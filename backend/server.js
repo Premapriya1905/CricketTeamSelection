@@ -1,7 +1,6 @@
 const express = require("express")
 const http = require("http")
 const socketIo = require("socket.io")
-const redis = require("redis")
 const cors = require("cors")
 const path = require("path")
 
@@ -9,26 +8,21 @@ const app = express()
 const server = http.createServer(app)
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: ["http://localhost:3000", "http://localhost:3001"],
     methods: ["GET", "POST"],
+    credentials: true,
   },
 })
 
-// Redis client setup
-const redisClient = redis.createClient({
-  host: "localhost",
-  port: 6379,
-})
-
-redisClient.on("error", (err) => {
-  console.log("Redis Client Error", err)
-})
-
-redisClient.connect()
-
-app.use(cors())
+// Middleware
+app.use(
+  cors({
+    origin: ["http://localhost:3000", "http://localhost:3001"],
+    credentials: true,
+  }),
+)
 app.use(express.json())
-app.use(express.static(path.join(__dirname, "../client/build")))
+app.use(express.static(path.join(__dirname, "../frontend/build")))
 
 // Cricket players pool
 const cricketPlayers = [
@@ -59,8 +53,8 @@ const cricketPlayers = [
   { id: 25, name: "Andre Russell", role: "All-rounder", country: "West Indies", rating: 84 },
 ]
 
-// In-memory storage (will be moved to Redis)
-const rooms = new Map()
+// In-memory storage
+const inMemoryRooms = new Map()
 const userTimers = new Map()
 
 // Helper functions
@@ -79,10 +73,9 @@ const shuffleArray = (array) => {
 
 const autoSelectPlayer = async (roomCode, userId) => {
   try {
-    const roomData = await redisClient.get(`room:${roomCode}`)
-    if (!roomData) return
+    const room = inMemoryRooms.get(roomCode)
+    if (!room) return
 
-    const room = JSON.parse(roomData)
     const availablePlayers = room.availablePlayers
 
     if (availablePlayers.length > 0) {
@@ -103,7 +96,7 @@ const autoSelectPlayer = async (roomCode, userId) => {
       room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
       room.currentRound++
 
-      await redisClient.set(`room:${roomCode}`, JSON.stringify(room))
+      inMemoryRooms.set(roomCode, room)
 
       // Broadcast auto-selection
       io.to(roomCode).emit("auto-selected", {
@@ -135,30 +128,30 @@ io.on("connection", (socket) => {
 
   // Create room
   socket.on("create-room", async (userData) => {
-    const roomCode = generateRoomCode()
-    const user = {
-      id: socket.id,
-      name: userData.name,
-      isHost: true,
-      selectedPlayers: [],
-      selectionCount: 0,
-      isConnected: true,
-    }
-
-    const roomData = {
-      code: roomCode,
-      host: socket.id,
-      users: [user],
-      availablePlayers: [...cricketPlayers],
-      isSelectionStarted: false,
-      currentTurnIndex: 0,
-      currentRound: 1,
-      turnOrder: [],
-      createdAt: new Date().toISOString(),
-    }
-
     try {
-      await redisClient.set(`room:${roomCode}`, JSON.stringify(roomData))
+      const roomCode = generateRoomCode()
+      const user = {
+        id: socket.id,
+        name: userData.name,
+        isHost: true,
+        selectedPlayers: [],
+        selectionCount: 0,
+        isConnected: true,
+      }
+
+      const roomData = {
+        code: roomCode,
+        host: socket.id,
+        users: [user],
+        availablePlayers: [...cricketPlayers],
+        isSelectionStarted: false,
+        currentTurnIndex: 0,
+        currentRound: 1,
+        turnOrder: [],
+        createdAt: new Date().toISOString(),
+      }
+
+      inMemoryRooms.set(roomCode, roomData)
       socket.join(roomCode)
 
       socket.emit("room-created", {
@@ -167,22 +160,21 @@ io.on("connection", (socket) => {
         users: roomData.users,
       })
     } catch (error) {
+      console.error("Create room error:", error)
       socket.emit("error", { message: "Failed to create room" })
     }
   })
 
   // Join room
   socket.on("join-room", async (data) => {
-    const { roomCode, userName } = data
-
     try {
-      const roomData = await redisClient.get(`room:${roomCode}`)
-      if (!roomData) {
+      const { roomCode, userName } = data
+      const room = inMemoryRooms.get(roomCode)
+
+      if (!room) {
         socket.emit("error", { message: "Room not found" })
         return
       }
-
-      const room = JSON.parse(roomData)
 
       if (room.users.length >= 6) {
         socket.emit("error", { message: "Room is full" })
@@ -204,7 +196,7 @@ io.on("connection", (socket) => {
       }
 
       room.users.push(user)
-      await redisClient.set(`room:${roomCode}`, JSON.stringify(room))
+      inMemoryRooms.set(roomCode, room)
 
       socket.join(roomCode)
 
@@ -222,22 +214,21 @@ io.on("connection", (socket) => {
         isHost: room.host === socket.id,
       })
     } catch (error) {
+      console.error("Join room error:", error)
       socket.emit("error", { message: "Failed to join room" })
     }
   })
 
   // Start selection
   socket.on("start-selection", async (data) => {
-    const { roomCode } = data
-
     try {
-      const roomData = await redisClient.get(`room:${roomCode}`)
-      if (!roomData) {
+      const { roomCode } = data
+      const room = inMemoryRooms.get(roomCode)
+
+      if (!room) {
         socket.emit("error", { message: "Room not found" })
         return
       }
-
-      const room = JSON.parse(roomData)
 
       if (room.host !== socket.id) {
         socket.emit("error", { message: "Only host can start selection" })
@@ -255,7 +246,7 @@ io.on("connection", (socket) => {
       room.isSelectionStarted = true
       room.currentTurnIndex = 0
 
-      await redisClient.set(`room:${roomCode}`, JSON.stringify(room))
+      inMemoryRooms.set(roomCode, room)
 
       io.to(roomCode).emit("selection-started", {
         turnOrder: shuffledUsers,
@@ -264,22 +255,22 @@ io.on("connection", (socket) => {
         message: "Team selection has started!",
       })
     } catch (error) {
+      console.error("Start selection error:", error)
       socket.emit("error", { message: "Failed to start selection" })
     }
   })
 
   // Select player
   socket.on("select-player", async (data) => {
-    const { roomCode, playerId } = data
-
     try {
-      const roomData = await redisClient.get(`room:${roomCode}`)
-      if (!roomData) {
+      const { roomCode, playerId } = data
+      const room = inMemoryRooms.get(roomCode)
+
+      if (!room) {
         socket.emit("error", { message: "Room not found" })
         return
       }
 
-      const room = JSON.parse(roomData)
       const currentUser = room.users[room.currentTurnIndex]
 
       if (currentUser.id !== socket.id) {
@@ -316,7 +307,7 @@ io.on("connection", (socket) => {
       room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
       room.currentRound++
 
-      await redisClient.set(`room:${roomCode}`, JSON.stringify(room))
+      inMemoryRooms.set(roomCode, room)
 
       // Broadcast selection
       io.to(roomCode).emit("player-selected", {
@@ -337,7 +328,30 @@ io.on("connection", (socket) => {
         })
       }
     } catch (error) {
+      console.error("Select player error:", error)
       socket.emit("error", { message: "Failed to select player" })
+    }
+  })
+
+  // Start turn timer
+  socket.on("start-turn-timer", async (data) => {
+    try {
+      const { roomCode, userId } = data
+
+      // Clear existing timer
+      if (userTimers.has(userId)) {
+        clearTimeout(userTimers.get(userId))
+      }
+
+      // Set 10-second timer
+      const timer = setTimeout(() => {
+        autoSelectPlayer(roomCode, userId)
+        userTimers.delete(userId)
+      }, 10000)
+
+      userTimers.set(userId, timer)
+    } catch (error) {
+      console.error("Timer error:", error)
     }
   })
 
@@ -353,24 +367,18 @@ io.on("connection", (socket) => {
 
     // Find and update user status in all rooms
     try {
-      const keys = await redisClient.keys("room:*")
-      for (const key of keys) {
-        const roomData = await redisClient.get(key)
-        if (roomData) {
-          const room = JSON.parse(roomData)
-          const userIndex = room.users.findIndex((u) => u.id === socket.id)
+      for (const [roomCode, room] of inMemoryRooms.entries()) {
+        const userIndex = room.users.findIndex((u) => u.id === socket.id)
 
-          if (userIndex !== -1) {
-            room.users[userIndex].isConnected = false
-            await redisClient.set(key, JSON.stringify(room))
+        if (userIndex !== -1) {
+          room.users[userIndex].isConnected = false
+          inMemoryRooms.set(roomCode, room)
 
-            const roomCode = key.replace("room:", "")
-            socket.to(roomCode).emit("user-disconnected", {
-              userId: socket.id,
-              userName: room.users[userIndex].name,
-              users: room.users,
-            })
-          }
+          socket.to(roomCode).emit("user-disconnected", {
+            userId: socket.id,
+            userName: room.users[userIndex].name,
+            users: room.users,
+          })
         }
       }
     } catch (error) {
@@ -380,16 +388,15 @@ io.on("connection", (socket) => {
 
   // Handle reconnection
   socket.on("reconnect-to-room", async (data) => {
-    const { roomCode, userId } = data
-
     try {
-      const roomData = await redisClient.get(`room:${roomCode}`)
-      if (!roomData) {
+      const { roomCode, userId } = data
+      const room = inMemoryRooms.get(roomCode)
+
+      if (!room) {
         socket.emit("error", { message: "Room not found" })
         return
       }
 
-      const room = JSON.parse(roomData)
       const userIndex = room.users.findIndex((u) => u.id === userId)
 
       if (userIndex !== -1) {
@@ -402,7 +409,7 @@ io.on("connection", (socket) => {
           room.turnOrder[turnIndex] = socket.id
         }
 
-        await redisClient.set(`room:${roomCode}`, JSON.stringify(room))
+        inMemoryRooms.set(roomCode, room)
 
         socket.join(roomCode)
 
@@ -422,54 +429,64 @@ io.on("connection", (socket) => {
         })
       }
     } catch (error) {
+      console.error("Reconnect error:", error)
       socket.emit("error", { message: "Failed to reconnect" })
     }
   })
 })
 
-// Start turn timer when selection begins
-io.on("connection", (socket) => {
-  socket.on("start-turn-timer", async (data) => {
-    const { roomCode, userId } = data
-
-    // Clear existing timer
-    if (userTimers.has(userId)) {
-      clearTimeout(userTimers.get(userId))
-    }
-
-    // Set 10-second timer
-    const timer = setTimeout(() => {
-      autoSelectPlayer(roomCode, userId)
-      userTimers.delete(userId)
-    }, 10000)
-
-    userTimers.set(userId, timer)
-  })
-})
-
 // API Routes
 app.get("/api/health", (req, res) => {
-  res.json({ status: "OK", message: "Cricket Team Selection Server is running!" })
+  res.json({
+    status: "OK",
+    message: "Cricket Team Selection Server is running!",
+    activeRooms: inMemoryRooms.size,
+    connectedUsers: io.engine.clientsCount,
+  })
 })
 
 app.get("/api/rooms/:roomCode", async (req, res) => {
   try {
-    const roomData = await redisClient.get(`room:${req.params.roomCode}`)
-    if (!roomData) {
+    const room = inMemoryRooms.get(req.params.roomCode)
+    if (!room) {
       return res.status(404).json({ error: "Room not found" })
     }
-    res.json(JSON.parse(roomData))
+    res.json(room)
   } catch (error) {
+    console.error("API error:", error)
     res.status(500).json({ error: "Server error" })
   }
 })
 
-// Serve React app
+// Serve React app (only if build exists)
 app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../client/build", "index.html"))
+  const buildPath = path.join(__dirname, "../frontend/build", "index.html")
+  try {
+    res.sendFile(buildPath)
+  } catch (error) {
+    res.json({ message: "Cricket Team Selection Server", status: "Running" })
+  }
 })
 
 const PORT = process.env.PORT || 5000
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("Shutting down gracefully...")
+
+  // Clear all timers
+  userTimers.forEach((timer) => clearTimeout(timer))
+  userTimers.clear()
+
+  // Close server
+  server.close(() => {
+    console.log("Server closed")
+    process.exit(0)
+  })
+})
+
 server.listen(PORT, () => {
   console.log(`🏏 Cricket Team Selection Server running on port ${PORT}`)
+  console.log(`🌐 Server URL: http://localhost:${PORT}`)
+  console.log(`📊 Health Check: http://localhost:${PORT}/api/health`)
 })

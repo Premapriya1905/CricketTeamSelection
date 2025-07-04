@@ -1638,7 +1638,7 @@ body {
   }
 
   .game-message {
-    bottom: 1rem;
+    bottom: 50px;
     left: 1rem;
     right: 1rem;
     transform: none;
