@@ -8,19 +8,17 @@ const app = express()
 const server = http.createServer(app)
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:3001", "http://cricketteamselection-production.up.railway.app"],
+    origin: "*", // Allow all origins
     methods: ["GET", "POST"],
-    credentials: true,
-  },
-})
+    credentials: true // optional, usually false when using *
+  }
+});
 
-// Middleware
-app.use(
-  cors({
-    origin: ["http://localhost:3000", "http://localhost:3001","http://cricketteamselection-production.up.railway.app"],
-    credentials: true,
-  }),
-)
+app.use(cors({
+  origin: "*", // Allow all origins
+  credentials: false // must be false when origin is "*"
+}));
+
 app.use(express.json())
 app.use(express.static(path.join(__dirname, "../frontend/build")))
 
