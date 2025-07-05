@@ -6,7 +6,7 @@ import "./App.css"
 import HomePage from "./components/HomePage"
 import GameRoom from "./components/GameRoom"
 
-const socket = io("cricketteamselection-production.up.railway.app")
+const socket = io("http://cricketteamselection-production.up.railway.app")
 
 function App() {
   const [currentView, setCurrentView] = useState("home")
