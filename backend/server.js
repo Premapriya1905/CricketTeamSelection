@@ -74,46 +74,48 @@ const autoSelectPlayer = async (roomCode, userId) => {
     const room = inMemoryRooms.get(roomCode)
     if (!room) return
 
+    const userIndex = room.users.findIndex((u) => u.id === userId)
+    if (userIndex === -1) return
+
+    // ✅ Move this early
+    if (room.users[userIndex].selectionCount >= 5) return
+
     const availablePlayers = room.availablePlayers
+    if (availablePlayers.length === 0) return
 
-    if (availablePlayers.length > 0) {
-      const randomIndex = Math.floor(Math.random() * availablePlayers.length)
-      const selectedPlayer = availablePlayers[randomIndex]
+    const randomIndex = Math.floor(Math.random() * availablePlayers.length)
+    const selectedPlayer = availablePlayers[randomIndex]
 
-      // Remove player from available pool
-      room.availablePlayers = availablePlayers.filter((p) => p.id !== selectedPlayer.id)
+    // Remove player from available pool
+    room.availablePlayers = availablePlayers.filter((p) => p.id !== selectedPlayer.id)
 
-      // Add to user's team
-      const userIndex = room.users.findIndex((u) => u.id === userId)
-      if (userIndex !== -1) {
-        room.users[userIndex].selectedPlayers.push(selectedPlayer)
-        room.users[userIndex].selectionCount++
-      }
+    // Add to user's team
+    room.users[userIndex].selectedPlayers.push(selectedPlayer)
+    room.users[userIndex].selectionCount++
 
-      // Move to next turn
-      room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
-      room.currentRound++
+    // Move to next turn
+    room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
+    room.currentRound++
 
-      inMemoryRooms.set(roomCode, room)
+    inMemoryRooms.set(roomCode, room)
 
-      // Broadcast auto-selection
-      io.to(roomCode).emit("auto-selected", {
-        player: selectedPlayer,
-        userId: userId,
-        userName: room.users[userIndex]?.name,
-        nextTurn: room.users[room.currentTurnIndex],
-        availablePlayers: room.availablePlayers,
-        users: room.users,
-        currentRound: room.currentRound,
+    // Broadcast auto-selection
+    io.to(roomCode).emit("auto-selected", {
+      player: selectedPlayer,
+      userId: userId,
+      userName: room.users[userIndex]?.name,
+      nextTurn: room.users[room.currentTurnIndex],
+      availablePlayers: room.availablePlayers,
+      users: room.users,
+      currentRound: room.currentRound,
+    })
+
+    // Check if selection is complete
+    if (room.users.every((user) => user.selectionCount >= 5)) {
+      io.to(roomCode).emit("selection-ended", {
+        finalTeams: room.users,
+        message: "Team selection completed!",
       })
-
-      // Check if selection is complete
-      if (room.users.every((user) => user.selectionCount >= 5)) {
-        io.to(roomCode).emit("selection-ended", {
-          finalTeams: room.users,
-          message: "Team selection completed!",
-        })
-      }
     }
   } catch (error) {
     console.error("Auto-select error:", error)
@@ -333,25 +335,31 @@ io.on("connection", (socket) => {
 
   // Start turn timer
   socket.on("start-turn-timer", async (data) => {
-    try {
-      const { roomCode, userId } = data
+  try {
+    const { roomCode, userId } = data
+    const room = inMemoryRooms.get(roomCode)
+    if (!room) return
 
-      // Clear existing timer
-      if (userTimers.has(userId)) {
-        clearTimeout(userTimers.get(userId))
-      }
+    const user = room.users.find((u) => u.id === userId)
+    if (!user || user.selectionCount >= 5) return // ❌ Don't start timer if already full
 
-      // Set 10-second timer
-      const timer = setTimeout(() => {
-        autoSelectPlayer(roomCode, userId)
-        userTimers.delete(userId)
-      }, 10000)
-
-      userTimers.set(userId, timer)
-    } catch (error) {
-      console.error("Timer error:", error)
+    // Clear existing timer
+    if (userTimers.has(userId)) {
+      clearTimeout(userTimers.get(userId))
     }
-  })
+
+    // Set 10-second timer
+    const timer = setTimeout(() => {
+      autoSelectPlayer(roomCode, userId)
+      userTimers.delete(userId)
+    }, 10000)
+
+    userTimers.set(userId, timer)
+  } catch (error) {
+    console.error("Timer error:", error)
+  }
+})
+
 
   // Handle disconnection
   socket.on("disconnect", async () => {

@@ -70,7 +70,8 @@ const UserTeam = ({ user, isCurrentUser }) => {
         )}
 
         {/* Show empty slots */}
-        {[...Array(5 - user.selectionCount)].map((_, index) => (
+        {[...Array(Math.max(0, 5 - user.selectionCount))].map((_, index) => (
+
           <div key={`empty-${index}`} className="empty-slot">
             <div className="slot-number">{user.selectionCount + index + 1}</div>
             <div className="slot-placeholder">
