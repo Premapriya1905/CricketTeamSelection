@@ -94,7 +94,12 @@ const autoSelectPlayer = async (roomCode, userId) => {
     room.users[userIndex].selectionCount++
 
     // Move to next turn
-    room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
+do {
+  room.currentTurnIndex = (room.currentTurnIndex + 1) % room.turnOrder.length
+  const nextUserId = room.turnOrder[room.currentTurnIndex]
+  const nextUser = room.users.find(u => u.id === nextUserId)
+  if (nextUser && nextUser.selectionCount < 5) break
+} while (true)
     room.currentRound++
 
     inMemoryRooms.set(roomCode, room)
@@ -271,12 +276,15 @@ io.on("connection", (socket) => {
         return
       }
 
-      const currentUser = room.users[room.currentTurnIndex]
+const currentTurnUserId = room.turnOrder[room.currentTurnIndex]
+if (currentTurnUserId !== socket.id) {
+  socket.emit("error", { message: "Not your turn" })
+  return
+}
 
-      if (currentUser.id !== socket.id) {
-        socket.emit("error", { message: "Not your turn" })
-        return
-      }
+const userIndex = room.users.findIndex((u) => u.id === socket.id)
+const currentUser = room.users[userIndex]
+
 
       if (currentUser.selectionCount >= 5) {
         socket.emit("error", { message: "You have already selected 5 players" })
@@ -299,12 +307,16 @@ io.on("connection", (socket) => {
       room.availablePlayers = room.availablePlayers.filter((p) => p.id !== playerId)
 
       // Add to user's team
-      const userIndex = room.users.findIndex((u) => u.id === socket.id)
       room.users[userIndex].selectedPlayers.push(selectedPlayer)
       room.users[userIndex].selectionCount++
 
       // Move to next turn
-      room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
+do {
+  room.currentTurnIndex = (room.currentTurnIndex + 1) % room.turnOrder.length
+  const nextUserId = room.turnOrder[room.currentTurnIndex]
+  const nextUser = room.users.find(u => u.id === nextUserId)
+  if (nextUser && nextUser.selectionCount < 5) break
+} while (true)
       room.currentRound++
 
       inMemoryRooms.set(roomCode, room)
