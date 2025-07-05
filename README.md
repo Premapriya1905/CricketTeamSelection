@@ -2,6 +2,8 @@
 
 A real-time multiplayer cricket team selection application built with React, Node.js, Express.js, Socket.IO, and Redis. Players can create or join rooms and take turns selecting cricket players to build their dream teams!
 
+**Netlify Link** - [ teal-bombolone-e73d2a.netlify.app ]
+
 ## ✨ Features
 
 - **Real-time Multiplayer**: Multiple users can join the same room and interact in real-time
