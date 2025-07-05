@@ -100,15 +100,18 @@ const autoSelectPlayer = async (roomCode, userId) => {
     inMemoryRooms.set(roomCode, room)
 
     // Broadcast auto-selection
-    io.to(roomCode).emit("auto-selected", {
-      player: selectedPlayer,
-      userId: userId,
-      userName: room.users[userIndex]?.name,
-      nextTurn: room.users[room.currentTurnIndex],
-      availablePlayers: room.availablePlayers,
-      users: room.users,
-      currentRound: room.currentRound,
-    })
+    const nextIndex = getNextEligibleTurnIndex(room)
+      if (nextIndex === -1) {
+        // Everyone finished
+        io.to(roomCode).emit("selection-ended", {
+          finalTeams: room.users,
+          message: "Team selection completed!",
+        })
+        return
+      }
+
+      room.currentTurnIndex = nextIndex
+      room.currentRound++
 
     // Check if selection is complete
     if (room.users.every((user) => user.selectionCount >= 5)) {
@@ -260,6 +263,18 @@ io.on("connection", (socket) => {
     }
   })
 
+  const getNextEligibleTurnIndex = (room) => {
+  let nextIndex = room.currentTurnIndex
+  for (let i = 0; i < room.users.length; i++) {
+    nextIndex = (nextIndex + 1) % room.users.length
+    if (room.users[nextIndex].selectionCount < 5) {
+      return nextIndex
+    }
+  }
+  return -1 // All users have completed selection
+}
+
+
   // Select player
   socket.on("select-player", async (data) => {
     try {
@@ -304,21 +319,19 @@ io.on("connection", (socket) => {
       room.users[userIndex].selectionCount++
 
       // Move to next turn
-      room.currentTurnIndex = (room.currentTurnIndex + 1) % room.users.length
-      room.currentRound++
+      const nextIndex = getNextEligibleTurnIndex(room)
+        if (nextIndex === -1) {
+          // Everyone finished
+          io.to(roomCode).emit("selection-ended", {
+            finalTeams: room.users,
+            message: "Team selection completed!",
+          })
+          return
+        }
 
-      inMemoryRooms.set(roomCode, room)
+        room.currentTurnIndex = nextIndex
+        room.currentRound++
 
-      // Broadcast selection
-      io.to(roomCode).emit("player-selected", {
-        player: selectedPlayer,
-        userId: socket.id,
-        userName: currentUser.name,
-        nextTurn: room.users[room.currentTurnIndex],
-        availablePlayers: room.availablePlayers,
-        users: room.users,
-        currentRound: room.currentRound,
-      })
 
       // Check if selection is complete
       if (room.users.every((user) => user.selectionCount >= 5)) {
@@ -341,7 +354,7 @@ io.on("connection", (socket) => {
     if (!room) return
 
     const user = room.users.find((u) => u.id === userId)
-    if (!user || user.selectionCount >= 5) return // ❌ Don't start timer if already full
+    if (!user || user.selectionCount >= 5) return 
 
     // Clear existing timer
     if (userTimers.has(userId)) {
